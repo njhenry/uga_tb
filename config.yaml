@@ -1,0 +1,68 @@
+year: 2019
+shapefile_settings:
+  modeling_level: 2
+  ids:
+    adm1: ['ADM1_EN']
+    adm2: ['ADM1_EN','ADM2_EN','uid']
+covariate_settings:
+  file_format: 'tif'
+  add_intercept: FALSE
+covariates:
+  tt_hcf:
+    annual: FALSE
+    transform: 'identity'
+    normalize: FALSE
+  ntl:
+    annual: TRUE
+    transform: 'identity'
+    normalize: FALSE
+pop_covariate: 
+  worldpop_total:
+    annual: TRUE
+    transform: 'identity'
+    normalize: FALSE
+versions:
+  results: '20231010_test'
+directories:
+  shps:
+    versioned: FALSE
+    path: '~/temp_data/uga/raw_data/prepared_geometries'
+    files:
+      adm2: 'uga_ad2_analysis.shp'
+      viz_adm0: 'uga_ad0_visualization.shp'
+      viz_adm2: 'uga_ad2_visualization.shp'
+  raw_data:
+    versioned: FALSE
+    path: '~/temp_data/uga/raw_data'
+    files:
+      refugees: 'covariate_prep/unhcr_refugees_pct_2022.csv'
+      prev_survey: 'prev_survey/prev_survey_summary.csv'
+  old_data:
+    versioned: FALSE
+    path: '~/temp_data/uga/prepped_data/20221009'
+    files:
+      shp: 'model_shp.shp'
+      covs: 'dist_dt.csv'
+  prepped_data:
+    versioned: TRUE
+    path: '~/temp_data/uga/prepped_data'
+    files:
+      model_shp: 'model_shp.shp'
+      id_raster: 'id_raster.tif'
+      covariates: 'dist_dt.csv'
+      prev_data: 'prev_data.csv'
+      notif_data: 'notif_data.csv'
+      link_table: 'link_table.csv'
+  covariates:
+    versioned: FALSE
+    path: '~/temp_data/rr'
+  model_results:
+    versioned: TRUE
+    path: '~/temp_data/uga/model_results'
+    files:
+      model_fit: 'model_fit.RDS'
+      model_preds: 'model_preds.RDS'
+      parameter_summary: 'parameter_summary.csv'
+      prevalence_summary: 'prevalence_summary.csv'
+      completeness_summary: 'completeness_summary.csv'
+      incidence_summary: 'incidence_summary.csv'
