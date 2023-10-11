@@ -49,10 +49,10 @@ directories:
     files:
       model_shp: 'model_shp.shp'
       id_raster: 'id_raster.tif'
+      link_table: 'link_table.csv'
       covariates: 'dist_dt.csv'
       prev_data: 'prev_data.csv'
       notif_data: 'notif_data.csv'
-      link_table: 'link_table.csv'
   covariates:
     versioned: FALSE
     path: '~/temp_data/rr'
