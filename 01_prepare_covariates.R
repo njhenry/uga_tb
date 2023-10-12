@@ -155,4 +155,92 @@ config$write(prev_agg, 'prepped_data', 'prev_data')
 
 ## 03. Prepare case notifications ------------------------------------------------------->
 
-# TODO
+# Load all notifications
+notifs_list <- list(
+  p1 = config$read('raw_data', 'notifs_p1'),
+  p2 = config$read('raw_data', 'notifs_p2'),
+  ped_p1 = config$read('raw_data', 'ped_notifs_p1'),
+  ped_p2 = config$read('raw_data', 'ped_notifs_p2')
+)
+# Prepare old notifications
+notifs_list <- lapply(notifs_list, melt, id.vars = 'organisationunitname')
+
+first4 <- function(char_vec) substr(char_vec, 1, 4)
+last4 <- function(char_vec) substr(char_vec, nchar(char_vec) - 3, nchar(char_vec))
+
+# Format separately
+notifs_list$p1[, year := as.integer(gsub('^y', '', variable)) ][, variable := NULL ]
+
+notifs_list$p2$year <- notifs_list$p2$variable |> 
+  as.character() |>
+  last4() |>
+  as.integer()
+(notifs_list$p2
+  [, type := 'PCD' ]
+  [grepl('P-BC', variable), type := 'PBC' ]
+  [grepl('EPTB', variable), type := 'EPTB' ]
+  [, value := nafill(value, fill = 0) ]
+)
+notifs_list$p2 <- notifs_list$p2[
+  , .(value = sum(value)), by = .(year, type, organisationunitname)
+]
+notifs_list$p2 <- dcast(notifs_list$p2, organisationunitname + year ~ type)
+setnames(notifs_list$p2, 'PBC', 'value')
+notifs_list$p2[, pct_pbc := value / (value + EPTB + PCD)]
+
+notifs_list$ped_p1$year <- (notifs_list$ped_p1$variable |>
+  as.character() |>
+  first4() |>
+  as.integer()
+)
+notifs_list$ped_p1[, value := nafill(value, fill = 0)]
+notifs_list$ped_p1 <- notifs_list$ped_p1[
+  , .(ped_value = sum(value)), by = .(organisationunitname, year)
+]
+
+notifs_list$ped_p2 <- (notifs_list$ped_p2
+  [, year := as.integer(gsub('^y', '', variable)) ]
+  [notifs_list$p2, pct_pbc := i.pct_pbc, on = c('year', 'organisationunitname')]
+  [, ped_value := value * pct_pbc ]
+  [, c('variable', 'pct_pbc', 'value') := NULL ]
+)
+
+# Combine total and pediatric notifications
+# Adjustment factor of 0.56 for for EPTB
+notifs_p1 <- merge(
+  x = notifs_list$p1, notifs_list$ped_p1, by = c('organisationunitname', 'year')
+)
+notifs_p1[, notif_count := (value - ped_value) * 0.565 ][, c('value', 'ped_value') := NULL ]
+
+notifs_p2 <- merge(
+  x = notifs_list$p2[, .(organisationunitname, year, value)],
+  y = notifs_list$ped_p2,
+  by = c('organisationunitname', 'year')
+)[, notif_count := value - ped_value ][, c('value', 'ped_value') := NULL ]
+
+# Combine across all years
+notifs_all <- data.table::rbindlist(list(notifs_p1, notifs_p2), use.names = TRUE)
+
+# Standardize district names
+notifs_all$ADM2_EN <- (notifs_all$organisationunitname |>
+  gsub(pattern = ' District$', replacement = '') |>
+  gsub(pattern = ' City$', replacement = '')
+)
+notifs_all[ADM2_EN == "Fort Portal", ADM2_EN := "Kabarole" ][, organisationunitname := NULL ]
+notifs_final <- (notifs_all
+  [, .(notif_count = sum(notif_count)), by = .(ADM2_EN, year)]
+  [order(ADM2_EN, year)]
+)
+
+library(ggplot2)
+tt <- ggplot(data = notifs_final) +
+  facet_wrap('ADM2_EN', ncol = 8, scales = 'free_y') + 
+  geom_line(aes(x = year, y = notif_count)) + 
+  geom_vline(xintercept = 2019.5, color = '#888888') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+pdf('~/test_notifications_time_trend.pdf', height = 20, width = 10)
+plot(tt)
+dev.off()
+
