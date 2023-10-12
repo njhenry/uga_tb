@@ -37,10 +37,11 @@ directories:
     files:
       refugees: 'covariate_prep/unhcr_refugees_pct_2022.csv'
       prev_survey: 'prev_survey/prev_survey_summary.csv'
-      notifs_p1: 'dhis2_notifications/all_notifs_2016_2019.csv'
+      notifs_p1: 'dhis2_notifications/all_notifs_2016_2019_update.csv'
       ped_notifs_p1: 'dhis2_notifications/ped_notifs_2016_2019.csv'
       notifs_p2: 'dhis2_notifications/all_notifs_2020_2022.csv'
       ped_notifs_p2: 'dhis2_notifications/ped_notifs_2020_2022.csv'
+      prop_over_15: 'gbd_2019_prop_over_15.csv'
   old_data:
     versioned: FALSE
     path: '~/temp_data/uga/prepped_data/20221009'

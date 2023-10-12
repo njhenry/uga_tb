@@ -45,19 +45,23 @@ config$write(aggregation_table, 'prepped_data', 'link_table')
 
 agg_cols <- config$get("shapefile_settings", "ids", "adm2")
 # Load population and aggregate
-population_raster <- mbg::load_covariates(
-  directory = config$get_dir_path('covariates'),
-  settings = config$get('pop_covariate'),
-  id_raster = id_raster,
-  year = config$get('year'),
-  file_format = config$get('covariate_settings', 'file_format'),
-  add_intercept = FALSE
-)[[1]]
+population_raster <- lapply(2016:2022, function(year){
+  mbg::load_covariates(
+    directory = config$get_dir_path('covariates'),
+    settings = config$get('pop_covariate'),
+    id_raster = id_raster,
+    year = year,
+    file_format = config$get('covariate_settings', 'file_format'),
+    add_intercept = FALSE
+  )[[1]]
+}) |> terra::rast()
 admin_pop <- pixel2poly::aggregate_raster_to_polygons(
   data_raster = population_raster,
   aggregation_table = aggregation_table,
   aggregation_cols = agg_cols,
   method = 'sum',
+  z_dimension_name = 'year',
+  z_dimension = 2016:2022,
   aggregated_field = 'population'
 )
 
@@ -79,7 +83,7 @@ for(raster_cov_name in raster_cov_names){
     aggregation_table = aggregation_table,
     aggregation_cols = agg_cols,
     method = 'weighted.mean',
-    weighting_raster = population_raster,
+    weighting_raster = population_raster[[(2016:2022) == config$get('year')]],
     aggregated_field = raster_cov_name
   )
 }
@@ -169,24 +173,21 @@ first4 <- function(char_vec) substr(char_vec, 1, 4)
 last4 <- function(char_vec) substr(char_vec, nchar(char_vec) - 3, nchar(char_vec))
 
 # Format separately
-notifs_list$p1[, year := as.integer(gsub('^y', '', variable)) ][, variable := NULL ]
-
-notifs_list$p2$year <- notifs_list$p2$variable |> 
-  as.character() |>
-  last4() |>
-  as.integer()
-(notifs_list$p2
-  [, type := 'PCD' ]
-  [grepl('P-BC', variable), type := 'PBC' ]
-  [grepl('EPTB', variable), type := 'EPTB' ]
-  [, value := nafill(value, fill = 0) ]
-)
-notifs_list$p2 <- notifs_list$p2[
-  , .(value = sum(value)), by = .(year, type, organisationunitname)
-]
-notifs_list$p2 <- dcast(notifs_list$p2, organisationunitname + year ~ type)
-setnames(notifs_list$p2, 'PBC', 'value')
-notifs_list$p2[, pct_pbc := value / (value + EPTB + PCD)]
+for(grp in c('p1', 'p2')){
+  dt <- copy(notifs_list[[grp]])
+  dt$year <- dt$variable |> as.character() |> last4() |> as.integer()
+  dt_agg <- (dt
+    [, type := 'PCD' ]
+    [grepl('P-BC', variable), type := 'PBC' ]
+    [grepl('EPTB', variable), type := 'EPTB' ]
+    [, value := nafill(value, fill = 0) ]
+    [, .(value = sum(value)), by = .(year, type, organisationunitname)]
+  )
+  dt_wide <- dcast(dt_agg, organisationunitname + year ~ type)
+  dt_wide[, value := PBC + PCD ]
+  dt_wide[, pct_in_case_def := value / (PBC + PCD + EPTB) ]
+  notifs_list[[grp]] <- copy(dt_wide)
+}
 
 notifs_list$ped_p1$year <- (notifs_list$ped_p1$variable |>
   as.character() |>
@@ -200,47 +201,48 @@ notifs_list$ped_p1 <- notifs_list$ped_p1[
 
 notifs_list$ped_p2 <- (notifs_list$ped_p2
   [, year := as.integer(gsub('^y', '', variable)) ]
-  [notifs_list$p2, pct_pbc := i.pct_pbc, on = c('year', 'organisationunitname')]
-  [, ped_value := value * pct_pbc ]
-  [, c('variable', 'pct_pbc', 'value') := NULL ]
+  [notifs_list$p2, pct_in_case_def := i.pct_in_case_def, on = c('year', 'organisationunitname')]
+  [, ped_value := value * pct_in_case_def ]
+  [, c('variable', 'pct_in_case_def', 'value') := NULL ]
 )
 
-# Combine total and pediatric notifications
-# Adjustment factor of 0.56 for for EPTB
-notifs_p1 <- merge(
-  x = notifs_list$p1, notifs_list$ped_p1, by = c('organisationunitname', 'year')
-)
-notifs_p1[, notif_count := (value - ped_value) * 0.565 ][, c('value', 'ped_value') := NULL ]
-
-notifs_p2 <- merge(
-  x = notifs_list$p2[, .(organisationunitname, year, value)],
-  y = notifs_list$ped_p2,
-  by = c('organisationunitname', 'year')
+notifs_combined <- merge(
+  x = notifs_list[c('p1','p2')] |> rbindlist(use.names = T),
+  y = notifs_list[c('ped_p1','ped_p2')] |> rbindlist(use.names = T),
+  by = c('year', 'organisationunitname'),
+  all = T
 )[, notif_count := value - ped_value ][, c('value', 'ped_value') := NULL ]
 
-# Combine across all years
-notifs_all <- data.table::rbindlist(list(notifs_p1, notifs_p2), use.names = TRUE)
-
 # Standardize district names
-notifs_all$ADM2_EN <- (notifs_all$organisationunitname |>
+notifs_combined$ADM2_EN <- (notifs_combined$organisationunitname |>
   gsub(pattern = ' District$', replacement = '') |>
   gsub(pattern = ' City$', replacement = '')
 )
-notifs_all[ADM2_EN == "Fort Portal", ADM2_EN := "Kabarole" ][, organisationunitname := NULL ]
-notifs_final <- (notifs_all
-  [, .(notif_count = sum(notif_count)), by = .(ADM2_EN, year)]
+(notifs_combined
+  [, organisationunitname := NULL ]
+  [ADM2_EN == "Fort Portal", ADM2_EN := "Kabarole" ]
+  [ADM2_EN == "Madi-Okollo", ADM2_EN := 'Madi Okollo' ]
+  [ADM2_EN == "Sembabule", ADM2_EN := 'Ssembabule' ]
+)
+notifs_agg <- (notifs_combined
+  [
+    , lapply(.SD, sum, na.rm=T),
+    .SDcols = c('notif_count', 'PBC', 'PCD', 'EPTB'),
+    by = .(ADM2_EN, year)]
   [order(ADM2_EN, year)]
 )
+notifs_final <- merge(
+  x = admin_covariates[, .(uid, ADM1_EN, ADM2_EN, tt_hcf, tt_hcf_norm)],
+  y = notifs_agg,
+  by = 'ADM2_EN',
+  all = TRUE
+)
 
-library(ggplot2)
-tt <- ggplot(data = notifs_final) +
-  facet_wrap('ADM2_EN', ncol = 8, scales = 'free_y') + 
-  geom_line(aes(x = year, y = notif_count)) + 
-  geom_vline(xintercept = 2019.5, color = '#888888') +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# Merge on over-15 population as the denominator
+over_15s <- config$read('raw_data', 'prop_over_15')
+admin_pop[over_15s, prop_over_15 := i.prop_over_15, on = 'year']
+admin_pop[, pop_over_15 := population * prop_over_15 ][, prop_over_15 := NULL ]
+notifs_final[admin_pop, pop_over_15 := i.pop_over_15, on = c('uid', 'year')]
 
-pdf('~/test_notifications_time_trend.pdf', height = 20, width = 10)
-plot(tt)
-dev.off()
-
+# Save notifications
+config$write(notifs_final, 'prepped_data', 'notif_data')
