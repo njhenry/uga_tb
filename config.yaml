@@ -1,4 +1,7 @@
 year: 2019
+duration:
+  intercept: 1.88
+  slope: 0.67
 shapefile_settings:
   modeling_level: 2
   ids:
@@ -7,23 +10,18 @@ shapefile_settings:
 covariate_settings:
   file_format: 'tif'
   add_intercept: FALSE
-covariates:
-  tt_hcf:
-    annual: FALSE
-    transform: 'identity'
-    normalize: FALSE
-  ntl:
-    annual: TRUE
-    transform: 'identity'
-    normalize: FALSE
-pop_covariate: 
-  worldpop_total:
-    annual: TRUE
-    transform: 'identity'
-    normalize: FALSE
+  trim_comp_covariates: TRUE
+pop_covariate_settings:
+  covariate: 'worldpop_total'
+  annual: TRUE
+  transform: 'identity'
+  normalize: FALSE
 versions:
   results: '20231010_test'
 directories:
+  repo:
+    versioned: FALSE
+    path: '~/repos/uga_tb'
   shps:
     versioned: FALSE
     path: '~/temp_data/uga/raw_data/prepared_geometries'
@@ -42,6 +40,7 @@ directories:
       notifs_p2: 'dhis2_notifications/all_notifs_2020_2022.csv'
       ped_notifs_p2: 'dhis2_notifications/ped_notifs_2020_2022.csv'
       prop_over_15: 'gbd_2019_prop_over_15.csv'
+      covariates_table: 'covariate_prep/covariates_table.csv'
   old_data:
     versioned: FALSE
     path: '~/temp_data/uga/prepped_data/20221009'
@@ -58,6 +57,7 @@ directories:
       covariates: 'dist_dt.csv'
       prev_data: 'prev_data.csv'
       notif_data: 'notif_data.csv'
+      adjmat: 'adjmat.RData'
   covariates:
     versioned: FALSE
     path: '~/temp_data/rr'

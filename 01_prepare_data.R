@@ -9,7 +9,7 @@
 ## #######################################################################################
 
 # Prepared data version
-versions <- list(prepped_data = '20231010')
+versions <- list(prepped_data = '20231024')
 
 # Load packages
 load_pkgs <- c('sf', 'data.table', 'glue')
@@ -25,6 +25,7 @@ config_fp <- file.path(repos_dir, 'uga_tb/config.yaml')
 config <- versioning::Config$new(config_list = config_fp, versions = versions)
 
 config$get_dir_path('prepped_data') |> dir.create()
+config$write_self('prepped_data')
 
 
 ## 01. Prepare district shapefile with covariates --------------------------------------->
@@ -48,7 +49,7 @@ agg_cols <- config$get("shapefile_settings", "ids", "adm2")
 population_raster <- lapply(2016:2022, function(year){
   mbg::load_covariates(
     directory = config$get_dir_path('covariates'),
-    settings = config$get('pop_covariate'),
+    covariates_table = config$get('pop_covariate_settings') |> as.data.table(),
     id_raster = id_raster,
     year = year,
     file_format = config$get('covariate_settings', 'file_format'),
@@ -66,15 +67,22 @@ admin_pop <- pixel2poly::aggregate_raster_to_polygons(
 )
 
 # Load raster covariates and aggregate
+covariates_table <- config$read(
+  "raw_data", "covariates_table",
+  header = TRUE,
+  colClasses = list(
+    character = c('covariate', 'transform'), logical = c('annual', 'normalize')
+  )
+)
 covariates_list <- mbg::load_covariates(
   directory = config$get_dir_path('covariates'),
-  settings = config$get('covariates'),
+  covariates_table = covariates_table,
   id_raster = id_raster,
   year = config$get('year'),
   file_format = config$get('covariate_settings', 'file_format'),
   add_intercept = config$get('covariate_settings', 'add_intercept')
 )
-raster_cov_names <- names(config$get('covariates'))
+raster_cov_names <- covariates_table$covariate
 admin_covs_list <- vector('list', length = length(covariates_list))
 names(admin_covs_list) <- raster_cov_names
 for(raster_cov_name in raster_cov_names){
@@ -224,18 +232,13 @@ notifs_combined$ADM2_EN <- (notifs_combined$organisationunitname |>
   [ADM2_EN == "Madi-Okollo", ADM2_EN := 'Madi Okollo' ]
   [ADM2_EN == "Sembabule", ADM2_EN := 'Ssembabule' ]
 )
-notifs_agg <- (notifs_combined
+notifs_final <- (notifs_combined
   [
     , lapply(.SD, sum, na.rm=T),
     .SDcols = c('notif_count', 'PBC', 'PCD', 'EPTB'),
     by = .(ADM2_EN, year)]
+  [admin_covariates, on = 'ADM2_EN']
   [order(ADM2_EN, year)]
-)
-notifs_final <- merge(
-  x = admin_covariates[, .(uid, ADM1_EN, ADM2_EN, tt_hcf, tt_hcf_norm)],
-  y = notifs_agg,
-  by = 'ADM2_EN',
-  all = TRUE
 )
 
 # Merge on over-15 population as the denominator
@@ -246,3 +249,21 @@ notifs_final[admin_pop, pop_over_15 := i.pop_over_15, on = c('uid', 'year')]
 
 # Save notifications
 config$write(notifs_final, 'prepped_data', 'notif_data')
+
+
+## 04. Prepare adjacency matrix --------------------------------------------------------->
+
+create_adjacency_matrix <- function(polygons, neighbor_style = "B", snap = 0.01){
+  assertthat::assert_that(nrow(polygons) > 0)
+  adjmat_sparse <- polygons |>
+    spdep::poly2nb(snap = snap) |>
+    spdep::nb2mat(style = neighbor_style, zero.policy = FALSE) |>
+    methods::as("dMatrix") |>
+    methods::as("generalMatrix") |>
+    methods::as("TsparseMatrix")
+  dimnames(adjmat_sparse) <- list(NULL, NULL)
+  return(adjmat_sparse)
+}
+
+adjmat <- create_adjacency_matrix(polygons = model_shp)
+config$write(adjmat, 'prepped_data', 'adjmat')
