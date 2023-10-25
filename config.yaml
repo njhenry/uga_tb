@@ -1,6 +1,7 @@
 all_data_years: [2016, 2017, 2018, 2019, 2020, 2021, 2022]
 model_years: [2016, 2017, 2018, 2019]
 prev_data_only: FALSE
+out_of_sample: FALSE
 duration:
   intercept: 1.88
   slope: 0.67
@@ -28,23 +29,23 @@ priors:
   prior_beta_covs:
     name: 'gaussian'
     par1: 0
-    par2: 3
+    par2: 1
   prior_beta_comp_t:
     name: 'gaussian'
-    par1: 1.5
-    par2: 3
+    par1: 0
+    par2: 1
   prior_rho_Z_prev:
     name: 'beta'
-    par1: 1
-    par2: 1
+    par1: 2.5
+    par2: 1.5
   prior_rho_Z1_comp:
     name: 'beta'
-    par1: 1
-    par2: 1
+    par1: 2.5
+    par2: 1.5
   prior_rho_Z2_comp:
     name: 'beta'
-    par1: 1
-    par2: 1
+    par1: 2.5
+    par2: 1.5
   prior_sigma_Z_prev:
     name: 'gamma'
     par1: 1
@@ -60,11 +61,11 @@ priors:
   prior_sigma_e_prev:
     name: 'gamma'
     par1: 1
-    par2: 1
+    par2: .25
   prior_sigma_e_comp:
     name: 'gamma'
     par1: 1
-    par2: 1
+    par2: .25
 versions:
   results: '20231010_test'
 directories:
@@ -120,3 +121,4 @@ directories:
       prevalence_summary: 'prevalence_summary.csv'
       completeness_summary: 'completeness_summary.csv'
       incidence_summary: 'incidence_summary.csv'
+      oos_summary: 'oos_summary.csv'
