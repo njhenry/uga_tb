@@ -1,55 +1,6 @@
 ## MODEL RUNNING AND POSTESTIMATION FUNCTIONS ------------------------------------------->
 
 
-#' Generate an ICAR precision matrix based on an adjacency matrix
-#'
-#' @description Generate a precision matrix for the intrinsic correlated autoregressive
-#'  (ICAR) model specification, a special case of the correlated autoregressive (CAR)
-#'  class of Markov random field models. This precision matrix is usually denoted as "Q".
-#'
-#' @details The precision matrix is fully specified by the adjacency weights, matrix W,
-#'   defined as W = {w_ij} where w_ij is 1 if i and j are neighbors, and 0 otherwise. The
-#'   precision matrix Q is defined as Q = D_w - W, where D_w is a diagonal matrix with
-#'   each diagonal term d_ii equal to the sum of row i in W.
-#'
-#'   Note that the ICAR model is improper, in that the conditional distributions
-#'   specified by the precision matrix do not determine a full joint distribution that
-#'   integrates to 1; in other words, the precision matrix Q is not invertible. The ICAR
-#'   precision matrix can still be used as a prior in a hierarchical model.
-#'
-#'   This function includes optional argument `scale_variance`. If set to `TRUE` (the
-#'   default), the function will rescale the precision matrix to have a generalized
-#'   variance of 1, which may aid in prior specifications that are comparable across
-#'   areal spatial models with different geometries.
-#'
-#'   For more details, see:
-#'   Banerjee, Carlin, and Gelfand (2015). Hierarchical Modeling and Analysis for Spatial
-#'     Data, 2nd Edition. Section 6.4.3.3: CAR models and their difficulties.
-#'   Riebler et al. (2016). An intuitive Bayesian sptial model for disease mapping that
-#'     accounts for scaling. Statistical methods in medical research, 25(4):1145-65.
-#'
-#' @param W Adjacency matrix, with w_ij = w_ji = 1 if areal units i and j are neighbors,
-#'   and zero otherwise. See function details for more information
-#' @param scale_variance [default TRUE] Should the precision matrix be rescaled so that
-#'  the generalized variance is equal to 1? Setting to TRUE may help with prior
-#'  specification.
-#'
-#' @return Sparse ICAR precision matrix Q. See function details for more information.
-#'
-#' @import Matrix INLA
-#' @export
-icar_precision_from_adjacency <- function(W, scale_variance = TRUE){
-  # Generate and return sparse precision matrix
-  Q <- Matrix::Diagonal(n = nrow(W), x = Matrix::rowSums(W)) - W
-  if(scale_variance){
-    # Scale model to have generalized variance of 1
-    constraint_matrix <- matrix(1, nrow = 1, ncol = ncol(Q))
-    Q <- INLA::inla.scale.model(Q, constr = list(A = constraint_matrix, e = 0))
-  }
-  return(Q)
-}
-
-
 #' Set up and run TMB
 #'
 #' @description Generic TMB model run handler. Sets up the ADFun object, applies
@@ -97,19 +48,6 @@ setup_run_tmb <- function(
   vbmsg(glue::glue("***  {model_name} RUN  ***"))
   vbmsg(paste0(c(rep("*",nchar(model_name)+14),"\n"),collapse=''))
 
-  if(parallel_model){
-    # Set up openmp threads
-    threads <- system('echo $OMP_NUM_THREADS', intern = TRUE)
-    if(threads != '') {
-      vbmsg(sprintf('Detected %s threads in OMP environmental variable.',threads))
-      openmp(as.numeric(threads))
-    } else {
-      vbmsg("Did not detect environmental OMP variable, defaulting to 2 cores. \n
-             You can set this using OMP_NUM_THREADS.")
-      openmp(2)
-    }
-  }
-
   # Compile TMB C++ template
   TMB::compile(template_fp)
   current_dir <- getwd()
@@ -117,13 +55,26 @@ setup_run_tmb <- function(
   compiled_path <- tools::file_path_sans_ext(basename(template_fp))
   dyn.load(TMB::dynlib(compiled_path))
 
+  if(parallel_model){
+    # Set up openmp threads
+    threads <- system('echo $OMP_NUM_THREADS', intern = TRUE)
+    if(threads != '') {
+      vbmsg(sprintf('Detected %s threads in OMP environmental variable.',threads))
+      TMB::openmp(as.numeric(threads))
+    } else {
+      vbmsg("Did not detect environmental OMP variable, defaulting to 4 cores. \n
+             You can set this using OMP_NUM_THREADS.")
+      TMB::openmp(4)
+    }
+  }
+
   # Make Autodiff function
   vbmsg("Constructing ADFunction...")
   tictoc::tic("  Making Model ADFun")
   obj <- TMB::MakeADFun(
     data = tmb_data_stack, parameters = params_list, random = tmb_random,
     map = tmb_map, DLL = compiled_path, silent = !inner_verbose,
-    inner.control = list(trace=inner_verbose, tol=1E-11)
+    inner.control = list(trace=inner_verbose) # tol=1E-11
   )
   obj$env$tracemgc <- as.integer(verbose)
   tictoc::toc()
@@ -137,7 +88,7 @@ setup_run_tmb <- function(
     itnmax = tmb_outer_maxsteps,
     hessian = FALSE,
     control = list(
-      trace = as.integer(verbose), follow.on = FALSE,
+      trace = as.integer(verbose), follow.on = TRUE,
       dowarn = as.integer(verbose), maxit = tmb_inner_maxsteps,
       factr = 1E-10
     )
@@ -212,11 +163,7 @@ generate_draws <- function(
   num_years <- nrow(c_templ) / nrow(p_templ)
 
   # Get parameter names
-  mu <- c(
-    tmb_sdreport$par.fixed[!names(tmb_sdreport$par.fixed) %in% c('res_comp','nu_comp')],
-    tmb_sdreport$par.random,
-    tmb_sdreport$par.fixed[names(tmb_sdreport$par.fixed) %in% c('res_comp','nu_comp')]
-  )
+  mu <- c(tmb_sdreport$par.fixed, tmb_sdreport$par.random)
   parnames <- names(mu)
 
   ## Input data checks
@@ -247,7 +194,8 @@ generate_draws <- function(
   # fes_res <- grepl('^beta|^res|phi', parnames)
   # parnames <- parnames[fes_res]
   # If needed, drop, the phi parameter, which can be unstable
-  keep_pars <- !grepl('logit_phi', parnames)
+  # keep_pars <- !grepl('logit_phi', parnames)
+  keep_pars <- rep(TRUE, length(mu))
   param_draws <- rmvnorm_prec(
     mu = mu[keep_pars],
     prec = prec_mat[keep_pars, keep_pars],
@@ -259,20 +207,24 @@ generate_draws <- function(
   ## Generate predictive draws from parameter draws
   ## 1) Prevalence
   p_fes <- as.matrix(p_templ[, ..prev_cov_names]) %*% param_draws[parnames=='beta_prev',]
-  p_res <- param_draws[parnames == 'res_prev', ]
-  p_preds <- exp(p_fes + p_res)
+  p_spatial_res <- param_draws[parnames == 'Z_prev', ]
+  p_iid_res <- param_draws[parnames == 'e_prev', ]
+  p_preds <- (p_fes + p_spatial_res + p_iid_res) |> as.matrix() |> exp()
   ## 2) Completeness
   if(prev_data_only == TRUE){
     c_preds <- NULL
   } else {
     c_fes <- as.matrix(c_templ[, ..comp_cov_names]) %*% param_draws[parnames=='beta_comp',]
-    c_res <- replicate_mat_n_times(param_draws[parnames == 'res_comp', ], num_years)
+    c_spatial_res <- replicate_mat_n_times(param_draws[parnames == 'Z1_comp', ], num_years)
+    c_iid_res <- param_draws[parnames == 'e_comp', ]
     c_r_slopes <- replicate_mat_n_times(
       replicate_mat_n_times(t(param_draws[parnames == 'beta_comp_t',]), num_locs) +
-        param_draws[parnames == 'nu_comp' ],
+        param_draws[parnames == 'Z2_comp' ],
       n_times = num_years
     )
-    c_preds <- plogis(c_fes + c_res + c_templ$zero_centered_year * c_r_slopes)
+    c_preds <- (c_fes + c_spatial_res + c_iid_res + c_templ$zero_centered_year * c_r_slopes) |>
+      as.matrix() |>
+      plogis()
   }
 
   # Return parameter draws and predictive draws

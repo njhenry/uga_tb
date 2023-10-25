@@ -45,8 +45,10 @@ config$write(id_raster, 'prepped_data', 'id_raster')
 config$write(aggregation_table, 'prepped_data', 'link_table')
 
 agg_cols <- config$get("shapefile_settings", "ids", "adm2")
+data_years <- config$get("all_data_years")
+
 # Load population and aggregate
-population_raster <- lapply(2016:2022, function(year){
+population_raster <- lapply(data_years, function(year){
   mbg::load_covariates(
     directory = config$get_dir_path('covariates'),
     covariates_table = config$get('pop_covariate_settings') |> as.data.table(),
@@ -62,7 +64,7 @@ admin_pop <- pixel2poly::aggregate_raster_to_polygons(
   aggregation_cols = agg_cols,
   method = 'sum',
   z_dimension_name = 'year',
-  z_dimension = 2016:2022,
+  z_dimension = data_years,
   aggregated_field = 'population'
 )
 
@@ -74,29 +76,31 @@ covariates_table <- config$read(
     character = c('covariate', 'transform'), logical = c('annual', 'normalize')
   )
 )
-covariates_list <- mbg::load_covariates(
-  directory = config$get_dir_path('covariates'),
-  covariates_table = covariates_table,
-  id_raster = id_raster,
-  year = config$get('year'),
-  file_format = config$get('covariate_settings', 'file_format'),
-  add_intercept = config$get('covariate_settings', 'add_intercept')
-)
-raster_cov_names <- covariates_table$covariate
-admin_covs_list <- vector('list', length = length(covariates_list))
-names(admin_covs_list) <- raster_cov_names
-for(raster_cov_name in raster_cov_names){
-  admin_covs_list[[raster_cov_name]] <- pixel2poly::aggregate_raster_to_polygons(
-    data_raster = covariates_list[[raster_cov_name]],
+admin_covs_list <- lapply(covariates_table$covariate, function(cov_name){
+  cov_raster <- lapply(data_years, function(year){
+    mbg::load_covariates(
+      directory = config$get_dir_path('covariates'),
+      covariates_table = covariates_table[covariate == cov_name, ],
+      id_raster = id_raster,
+      year = year,
+      file_format = config$get('covariate_settings', 'file_format'),
+      add_intercept = FALSE
+    )[[1]]
+  }) |> terra::rast()
+  agg_table <- pixel2poly::aggregate_raster_to_polygons(
+    data_raster = cov_raster,
     aggregation_table = aggregation_table,
     aggregation_cols = agg_cols,
     method = 'weighted.mean',
-    weighting_raster = population_raster[[(2016:2022) == config$get('year')]],
-    aggregated_field = raster_cov_name
+    z_dimension_name = 'year',
+    z_dimension = data_years,
+    weighting_raster = population_raster,
+    aggregated_field = cov_name
   )
-}
+  return(agg_table)
+})
 admin_covariates <- Reduce(
-  f = function(x, y) merge(x=x, y=y, by = agg_cols),
+  f = function(x, y) merge(x=x, y=y, by = c(agg_cols, 'year')),
   x = admin_covs_list
 )
 # Add intercept
@@ -115,6 +119,12 @@ old_shp$old_uid <- old_shp$uid
 old_shp <- old_shp[, c('old_uid')]
 old_covs <- config$read('old_data', 'covs')
 setnames(old_covs, 'uid', 'old_uid')
+# Extend some covariates to 2022
+old_covs <- rbindlist(list(
+  old_covs,
+  old_covs[year == 2020, ][, year := 2021 ],
+  old_covs[year == 2020, ][, year := 2022 ]
+))
 
 centroids <- sf::st_centroid(model_shp[, c('uid')], of_largest_polygon = TRUE)
 uid_match_tbl <- as.data.table(sf::st_join(x = centroids, y = old_shp))[, .(uid, old_uid)]
@@ -123,7 +133,7 @@ uid_match_tbl <- as.data.table(sf::st_join(x = centroids, y = old_shp))[, .(uid,
   [
     old_covs,
     `:=` (cattle_pc = i.cattle_pc, hiv = i.hiv_test, hh_crowding = i.household_crowding),
-    on = 'old_uid'
+    on = c('old_uid', 'year')
   ]
   [, old_uid := NULL ]
 )
@@ -135,7 +145,7 @@ for(cov_name in c('tt_hcf', 'log_ntl', 'refugees_pct', 'cattle_pc', 'hiv', 'hh_c
 }
 
 # Save admin covariates
-admin_covariates <- admin_covariates[order(uid)]
+admin_covariates <- admin_covariates[order(year, uid)]
 config$write(admin_covariates, 'prepped_data', 'covariates')
 
 
@@ -158,7 +168,7 @@ prev_agg <- (prev_with_uids
   by = agg_cols
   ]
   [, prev_per_100k_obs := ptb_bc / sampsize * 1e5 ]
-  [admin_covariates, on = agg_cols, nomatch = NULL]
+  [admin_covariates[year == 2016, ], on = agg_cols, nomatch = NULL]
   [order(uid)]
 )
 
@@ -237,7 +247,7 @@ notifs_final <- (notifs_combined
     , lapply(.SD, sum, na.rm=T),
     .SDcols = c('notif_count', 'PBC', 'PCD', 'EPTB'),
     by = .(ADM2_EN, year)]
-  [admin_covariates, on = 'ADM2_EN']
+  [admin_covariates, on = c('ADM2_EN', 'year')]
   [order(ADM2_EN, year)]
 )
 
