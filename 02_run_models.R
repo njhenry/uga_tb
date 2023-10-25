@@ -8,7 +8,7 @@
 ##
 ## #######################################################################################
 
-versions <- list(prepped_data = '20231024', model_results = '20231024_v1')
+versions <- list(prepped_data = '20231024', model_results = '20231024_v2_oos')
 
 # Load packages
 load_libs <- c('data.table','Matrix','TMB','glue','matrixStats','tictoc','optimx')
@@ -36,10 +36,13 @@ adjmat <- config$read('prepped_data', 'adjmat')
 model_years <- config$get('model_years')
 prev_cov_names <- config$get('covs', 'prev')
 comp_cov_names <- config$get('covs', 'comp')
+# Different execution flows for in-sample vs. out-of-sample and full vs. prevalence only
+prev_data_only <- config$get('prev_data_only')
+out_of_sample <- config$get('out_of_sample')
 
 # Order the districts DT correctly
-dist_dt <- dist_dt[year %in% model_years, ][order(year, uid)]
-dist_dt[, intercept := 1 ]
+dist_dt <- copy(dist_dt[year %in% model_years, ][order(year, uid)])
+dist_dt$intercept <- 1
 # Fixed effects - TB prevalence
 covs_prev <- as.matrix(dist_dt[year == 2016, ..prev_cov_names])
 # Fixed effects - notifications completeness
@@ -63,9 +66,10 @@ if(config$get('covariate_settings', 'trim_comp_covariates')){
     dist_dt[[col_name]][ dist_dt[[col_name]] > trim_max] <- trim_max
   }
 }
+dist_dt <- copy(dist_dt)
 
 # Zero-center years
-z_c_year_index <- data.table(
+z_c_year_index <- data.table::data.table(
   year = model_years,
   zero_centered_year = seq(-0.5, 0.5, length.out = length(model_years))
 )
@@ -128,7 +132,7 @@ params_list <- list(
 # DROP NOTIFICATIONS DATA IF SPECIFIED
 map_list <- list()
 tmb_random <- c('Z_prev', 'Z1_comp', 'Z2_comp', 'e_prev', 'e_comp')
-if(config$get('prev_data_only')){
+if(prev_data_only){
   # Drop input data
   null_fields <- c('notif_y','notif_n','idx_loc_notif','idx_year_notif')
   for(null_field in null_fields) tmb_data_stack[[null_field]] <- numeric(0)
@@ -147,41 +151,83 @@ if(config$get('prev_data_only')){
 
 ## FIT TMB MODEL ------------------------------------------------------------------------>
 
-model_fit <- setup_run_tmb(
-  tmb_data_stack = tmb_data_stack, params_list = params_list,
-  tmb_random = tmb_random, tmb_map = map_list,
-  template_fp = file.path(repos_dir, 'uga_tb/joint_completeness_tmb_model.cpp'),
-  tmb_outer_maxsteps = 1.5E5, tmb_inner_maxsteps = 1E5, parallel_model = FALSE,
-  optimization_method = 'L-BFGS-B',
-  model_name="UGA joint model", verbose=TRUE, inner_verbose=FALSE
-)
-sdrep <- sdreport(model_fit$obj, bias.correct = TRUE, getJointPrecision = TRUE)
-
+# Prediction templates
 prev_template <- copy(dist_dt[year == 2016, ])
 comp_template <- copy(dist_dt)
 
-model_preds <- generate_draws(
-  tmb_sdreport = sdrep, prev_template = prev_template, comp_template = comp_template,
-  prev_cov_names = prev_cov_names, comp_cov_names = comp_cov_names,
-  prev_data_only = config$get('prev_data_only'), num_draws = 250
-)
+if(out_of_sample){
+  # OUT OF SAMPLE EXECUTION
+  holdout_ids <- tmb_data_stack$idx_holdout_prev
+  prev_data[, holdout_idx := .I ]
+  oos_comparison_list <- vector('list', length = length(holdout_ids))
 
-# Summarize draws
-keep_cols_prev <- c(config$get('shapefile_settings','ids','adm2'), 'year', prev_cov_names)
-prev_summ <- cbind(
-  prev_template[, ..keep_cols_prev],
-  summarize_draws(model_preds$pred_draws_prevalence)
-)
-if(prev_data_only == FALSE){
-  keep_cols_comp <- c(config$get('shapefile_settings','ids','adm2'), 'year', comp_cov_names)
-  comp_summ <- cbind(
-    comp_template[, ..keep_cols_comp],
-    summarize_draws(model_preds$pred_draws_completeness)
+  # Run holding out every prevalence data point, then compare data to OOS prediction
+  for(holdout_id in holdout_ids) try({
+    tmb_data_stack$holdout <- holdout_id
+    model_fit <- setup_run_tmb(
+      tmb_data_stack = tmb_data_stack, params_list = params_list,
+      tmb_random = tmb_random, tmb_map = map_list,
+      template_fp = file.path(repos_dir, 'uga_tb/joint_completeness_tmb_model.cpp'),
+      tmb_outer_maxsteps = 1.5E5, tmb_inner_maxsteps = 1E5, parallel_model = FALSE,
+      optimization_method = 'L-BFGS-B',
+      model_name="UGA joint model", verbose=TRUE, inner_verbose=FALSE
+    )
+    sdrep <- sdreport(model_fit$obj, bias.correct = TRUE, getJointPrecision = TRUE)
+    model_preds <- generate_draws(
+      tmb_sdreport = sdrep, prev_template = prev_template, comp_template = comp_template,
+      prev_cov_names = prev_cov_names, comp_cov_names = comp_cov_names,
+      prev_data_only = prev_data_only, num_draws = 250
+    )
+    # Compare to held-out prevalence survey data
+    merge_cols <- c(config$get('shapefile_settings','ids','adm2'), 'year')
+    prev_summ <- cbind(
+      prev_template[, ..merge_cols],
+      summarize_draws(model_preds$pred_draws_prevalence)
+    )
+    oos_keep_cols <- c(merge_cols, 'mean', 'median', 'lower', 'upper')
+    oos_comparison_list[[holdout_id]] <- merge(
+      x = prev_data[holdout_idx == holdout_id,],
+      y = prev_summ[, ..oos_keep_cols],
+      by = merge_cols
+    )
+  })
+  # Combine list and save
+  oos_comparison_dt <- rbindlist(oos_comparison_list)
+  config$write(oos_comparison_dt, 'model_results', 'oos_summary')
+
+} else {
+
+  # IN-SAMPLE MODEL EXECUTION
+  model_fit <- setup_run_tmb(
+    tmb_data_stack = tmb_data_stack, params_list = params_list,
+    tmb_random = tmb_random, tmb_map = map_list,
+    template_fp = file.path(repos_dir, 'uga_tb/joint_completeness_tmb_model.cpp'),
+    tmb_outer_maxsteps = 1.5E5, tmb_inner_maxsteps = 1E5, parallel_model = FALSE,
+    optimization_method = 'L-BFGS-B', model_name="UGA joint model",
+    verbose = FALSE, inner_verbose = FALSE
   )
+  sdrep <- sdreport(model_fit$obj, bias.correct = TRUE, getJointPrecision = TRUE)
+  model_preds <- generate_draws(
+    tmb_sdreport = sdrep, prev_template = prev_template, comp_template = comp_template,
+    prev_cov_names = prev_cov_names, comp_cov_names = comp_cov_names,
+    prev_data_only = prev_data_only, num_draws = 250
+  )
+  # Summarize draws
+  keep_cols_prev <- c(config$get('shapefile_settings','ids','adm2'), 'year', prev_cov_names)
+  prev_summ <- cbind(
+    prev_template[, ..keep_cols_prev],
+    summarize_draws(model_preds$pred_draws_prevalence)
+  )
+  if(prev_data_only == FALSE){
+    keep_cols_comp <- c(config$get('shapefile_settings','ids','adm2'), 'year', comp_cov_names)
+    comp_summ <- cbind(
+      comp_template[, ..keep_cols_comp],
+      summarize_draws(model_preds$pred_draws_completeness)
+    )
+  }
+  # Save all to file
+  config$write(model_fit, 'model_results', 'model_fit')
+  config$write(model_preds, 'model_results', 'model_preds')
+  config$write(prev_summ, 'model_results', 'prevalence_summary')
+  if(prev_data_only == FALSE) config$write(comp_summ, 'model_results', 'completeness_summary')
 }
-
-# Save all to file
-config$write(model_fit, 'model_results', 'model_fit')
-config$write(model_preds, 'model_results', 'model_preds')
-config$write(prev_summ, 'model_results', 'prevalence_summary')
-if(prev_data_only == FALSE) config$write(comp_summ, 'model_results', 'completeness_summary')
