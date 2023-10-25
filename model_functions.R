@@ -191,16 +191,22 @@ generate_draws <- function(
   message(sprintf(" - Generating %i parameter draws...", num_draws))
   prec_mat <- tmb_sdreport$jointPrecision
   if(any(colnames(prec_mat) != parnames )) stop("Issue with parameter ordering")
-  # fes_res <- grepl('^beta|^res|phi', parnames)
-  # parnames <- parnames[fes_res]
-  # If needed, drop, the phi parameter, which can be unstable
-  # keep_pars <- !grepl('logit_phi', parnames)
-  keep_pars <- rep(TRUE, length(mu))
-  param_draws <- rmvnorm_prec(
-    mu = mu[keep_pars],
-    prec = prec_mat[keep_pars, keep_pars],
-    n.sims = num_draws
-  )
+  # If the matrix is not initially positive definite, try dropping hyperparameters
+  tryCatch({
+    keep_pars <<- rep(TRUE, length(mu))
+    param_draws <<- rmvnorm_prec(
+      mu = mu[keep_pars],
+      prec = prec_mat[keep_pars, keep_pars],
+      n.sims = num_draws
+    )
+  }, error = function(e){
+    keep_pars <<- grepl('^beta|^Z|^e', parnames)
+    param_draws <<- rmvnorm_prec(
+      mu = mu[keep_pars],
+      prec = prec_mat[keep_pars, keep_pars],
+      n.sims = num_draws
+    )
+  })
   parnames <- parnames[keep_pars]
   rownames(param_draws) <- parnames
 
