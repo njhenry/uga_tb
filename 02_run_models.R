@@ -8,7 +8,7 @@
 ##
 ## #######################################################################################
 
-versions <- list(prepped_data = '20231024', model_results = '20231024_v2_oos')
+versions <- list(prepped_data = '20231024', model_results = '20231024_v2')
 
 # Load packages
 load_libs <- c('data.table','Matrix','TMB','glue','matrixStats','tictoc','optimx')
@@ -206,28 +206,62 @@ if(out_of_sample){
     optimization_method = 'L-BFGS-B', model_name="UGA joint model",
     verbose = FALSE, inner_verbose = FALSE
   )
+  config$write(model_fit, 'model_results', 'model_fit')
   sdrep <- sdreport(model_fit$obj, bias.correct = TRUE, getJointPrecision = TRUE)
   model_preds <- generate_draws(
     tmb_sdreport = sdrep, prev_template = prev_template, comp_template = comp_template,
     prev_cov_names = prev_cov_names, comp_cov_names = comp_cov_names,
     prev_data_only = prev_data_only, num_draws = 250
   )
+  config$write(model_preds, 'model_results', 'model_preds')
+
   # Summarize draws
   keep_cols_prev <- c(config$get('shapefile_settings','ids','adm2'), 'year', prev_cov_names)
   prev_summ <- cbind(
     prev_template[, ..keep_cols_prev],
     summarize_draws(model_preds$pred_draws_prevalence)
   )
+  config$write(prev_summ, 'model_results', 'prevalence_summary')
+
   if(prev_data_only == FALSE){
     keep_cols_comp <- c(config$get('shapefile_settings','ids','adm2'), 'year', comp_cov_names)
     comp_summ <- cbind(
       comp_template[, ..keep_cols_comp],
       summarize_draws(model_preds$pred_draws_completeness)
     )
+    config$write(comp_summ, 'model_results', 'completeness_summary')
+
+    # Calculate duration, then incidence, across four years
+    duration_draws <- (
+      config$get('duration', 'intercept') - 
+      config$get('duration', 'slope') * model_preds$pred_draws_completeness
+    )
+    incidence_draws <- replicate_mat_n_times(
+      model_preds$pred_draws_prevalence, n = length(model_years)
+    ) / duration_draws
+    incidence_summ <- cbind(
+      comp_template[, ..keep_cols_comp],
+      summarize_draws(incidence_draws)
+    )
+    config$write(incidence_summ, 'model_results', 'incidence_summary')
+
+    # Calculate empirical completeness: Case notifications / incidence
+    merge_cols_comp_obs <- c(config$get('shapefile_settings','ids','adm2'), 'year')
+    completeness_obs <- merge(
+      x = notif_data[, c(merge_cols_comp_obs, 'notif_count', 'pop_over_15'), with = F],
+      y = incidence_summ,
+      by = merge_cols_comp_obs
+    )[order(year, uid)]
+    from_cols <- c('mean', 'median', 'lower', 'upper')
+    to_cols <- paste0('inc_', from_cols)
+    setnames(completeness_obs, from_cols, to_cols)
+    (completeness_obs
+      [, cnr := notif_count / pop_over_15 ]
+      [, mean := cnr / inc_mean ]
+      [, median := cnr / inc_median ]
+      [, lower := cnr / inc_upper ]
+      [, upper := cnr / inc_lower ]
+    )
+    config$write(completeness_obs, 'model_results', 'completeness_observations')
   }
-  # Save all to file
-  config$write(model_fit, 'model_results', 'model_fit')
-  config$write(model_preds, 'model_results', 'model_preds')
-  config$write(prev_summ, 'model_results', 'prevalence_summary')
-  if(prev_data_only == FALSE) config$write(comp_summ, 'model_results', 'completeness_summary')
 }
