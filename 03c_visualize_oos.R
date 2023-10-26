@@ -1,15 +1,15 @@
 ## #######################################################################################
 ##
-## VISUALIZE MODEL RESULTS
+## VISUALIZE OUT OF SAMPLE
 ##
 ## Author: Nat Henry
-## Created: 3 September 2021
-## Purpose: Show Uganda TB model results in relation to the underlying data
+## Created: 25 October 2023
+## Purpose: Results from prevalence survey OOS runs
 ##
 ## #######################################################################################
 
-MODEL_VERSION <- '20231024_v2'
-PREV_VERSION <- '20231024_v2_p'
+MODEL_VERSION_OOS <- '20231024_v2_oos'
+PREV_VERSION_OOS <- '20231024_v2_p_oos'
 
 load_libs <- c('data.table','sf','ggplot2','grid','gridExtra','glue','terra')
 invisible(lapply(load_libs, library, character.only=TRUE))
@@ -19,10 +19,10 @@ repos_dir <- '~/repos/'
 devtools::load_all(file.path(repos_dir, 'versioning'))
 
 config <- versioning::Config$new(
-  config_list = file.path('~/temp_data/uga/model_results', MODEL_VERSION, 'config.yaml')
+  config_list = file.path('~/temp_data/uga/model_results', MODEL_VERSION_OOS, 'config.yaml')
 )
 config_p <- versioning::Config$new(
-  config_list = file.path('~/temp_data/uga/model_results', PREV_VERSION, 'config.yaml')
+  config_list = file.path('~/temp_data/uga/model_results', PREV_VERSION_OOS, 'config.yaml')
 )
 
 viz_dir <- file.path(config$get_dir_path('model_results'), 'viz')
@@ -33,6 +33,61 @@ uga <- config$read('shps', 'viz_adm2')
 outline_sf <- config$read('shps', 'viz_adm0')
 
 # Load input data
+oos_full <- config$read('model_results', 'oos_summary')
+oos_full[, plot_label := "Full model"]
+oos_prev_only <- config_p$read('model_results', 'oos_summary')
+oos_prev_only[, plot_label := "Model based on survey data only"]
+measure_cols <- c('mean', 'median', 'lower', 'upper')
+for(measure_col in measure_cols){
+  oos_full[[measure_col]] <- oos_full[[measure_col]] * 1e5
+  oos_prev_only[[measure_col]] <- oos_prev_only[[measure_col]] * 1e5
+}
+
+
+## SIDE-BY-SIDE MAPS
+
+
+merge_cols <- 'uid'
+keep_cols <- c(merge_cols, measure_cols)
+combined <- merge(
+  x = oos_full[, c(keep_cols, 'ptb_bc', 'sampsize', 'prev_per_100k_obs'), with = F],
+  y = oos_prev_only[, ..keep_cols],
+  by = merge_cols,
+  suffixes = c('', '_prev_only'),
+  all = TRUE
+)
+
+## SIDE-BY-SIDE SCATTERS
+
+scatter_keep_cols <- c('uid', 'sampsize', 'prev_per_100k_obs', 'plot_label', measure_cols)
+scatter_dt <- rbindlist(list(
+  oos_full[, ..scatter_keep_cols], oos_prev_only[, ..scatter_keep_cols]
+))
+
+scatter_fig <- ggplot(
+  data = scatter_dt,
+  aes(x = prev_per_100k_obs, y = mean, ymin = lower, ymax = upper)
+) +
+  facet_wrap('plot_label') + 
+  geom_abline(intercept=0, slope=1, linetype=2, lwd=.5, color='#888888') +
+  geom_crossbar(alpha=.5) +
+  geom_point(size=2, aes(fill = sampsize), shape=21) +
+  viridis::scale_fill_viridis() +
+  scale_x_continuous(oob=scales::squish, limits=c(0, 2500), labels=scales::comma) +
+  scale_y_continuous(oob=scales::squish, limits=c(0, 2500), labels=scales::comma) +
+  labs(
+    title='Out-of-sample comparison to TB Prevalence Survey',
+    fill='Prevalence survey\nsample size',
+    x = 'Unadjusted survey prevalence', y = 'Out-of-sample modeled TB prevalence'
+  ) +
+  theme_bw()
+png(file.path(viz_dir, 'oos_data_scatter.png'), height=6, width=10, units='in', res=300)
+print(scatter_fig)
+dev.off()
+
+
+
+
 prev_data <- config$read("prepped_data", "prev_data")
 notif_data <- config$read("prepped_data", "notif_data")
 notif_data[, notifs_per_100k := notif_count / pop_over_15 * 1e5 ]
