@@ -262,19 +262,20 @@ grid.arrange(
 dev.off()
 
 
-## Plot: Completeness in all model years
+## Plot: Completeness in first and last model years
 comp_sf <- merge(
   x = uga[, c('uid')],
   y = comp_obs[, .(uid, year, comp_mean, comp_lower, comp_upper)],
   by = 'uid'
 )
+comp_sf <- comp_sf[comp_sf$year %in% range(comp_sf$year), ]
 
 comp_cols <- RColorBrewer::brewer.pal(name='BuPu', n=9)
 comp_breaks <- seq(0.2, 0.8, by=.1)
 comp_lims <- range(comp_breaks)
 
 comp_fig <- ggplot(data=comp_sf) +
-  facet_wrap('year', ncol = ceiling(sqrt(length(model_years)))) +
+  facet_wrap('year', nrow = 1) +
   country_outline +
   geom_sf(data=comp_sf, aes(fill=comp_mean), lwd=.15, color='#222222') +
   scale_fill_gradientn(
@@ -289,7 +290,7 @@ comp_fig <- ggplot(data=comp_sf) +
     panel.grid.major = element_line(colour = 'transparent'),
   )
 
-png(file.path(viz_dir, 'notif_completeness.png'), height=7.5, width=7.5, units='in', res=300)
+png(file.path(viz_dir, 'notif_completeness.png'), height=4, width=7.5, units='in', res=300)
 plot(comp_fig)
 dev.off()
 
@@ -433,8 +434,8 @@ dev.off()
 
 ## FIG: Comparing ability to distinguish between low and high-burden districts
 
-thresh_low <- 253
-thresh_high <- thresh_low * 3
+thresh_low <- 300
+thresh_high <- 600
 tlabs <- c(
   'High burden (high confidence)',
   'High burden (low confidence)',
