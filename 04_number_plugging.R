@@ -9,50 +9,59 @@
 ##
 ## #######################################################################################
 
+# Settings
+MODEL_VERSION <- '20231024_v2'
+PREV_VERSION <- '20231024_v2_p'
+SUMMARY_YEAR <- 2019
+
 load_libs <- c('data.table','glue','matrixStats')
 invisible(lapply(load_libs, library, character.only=TRUE))
 
-# Settings
-data_version <- '20211003'
-prev_data_version <- '20210920_prev_only'
-duration_intercept <- 1.62
-duration_slope <- .56
+# Load custom packages
+repos_dir <- '~/repos/'
+devtools::load_all(file.path(repos_dir, 'versioning'))
 
-# Input and output filepaths
-work_dir <- 'REDACTED'
-prepped_dir <- file.path(work_dir, 'prepped_data', data_version)
-model_dir <- file.path(work_dir, 'model_results', data_version)
+# Load configs
+config <- versioning::Config$new(
+  config_list = file.path('~/temp_data/uga/model_results', MODEL_VERSION, 'config.yaml')
+)
+config_p <- versioning::Config$new(
+  config_list = file.path('~/temp_data/uga/model_results', PREV_VERSION, 'config.yaml')
+)
 
 # Load input data
-prev_data <- fread(file.path(prepped_dir, 'prev_data.csv'))
-notif_data <- fread(file.path(prepped_dir, 'notif_data.csv'))
-dist_dt <- fread(file.path(prepped_dir, 'dist_dt.csv'))
-prev_summ <- fread(file.path(model_dir, 'prev_summ.csv'))
-comp_summ <- fread(file.path(model_dir, 'comp_summ.csv'))
-prev_summ_no_notifs <- fread(file.path(
-  work_dir, 'model_results', prev_data_version, 'prev_summ.csv'
-))
+prev_data <- config$read('prepped_data', 'prev_data')
+notif_data <- config$read('prepped_data', 'notif_data')
+dist_dt <- config$read('prepped_data', 'covariates')
+prev_summ <- config$read('model_results', 'prevalence_summary')
+comp_summ <- config$read('model_results', 'completeness_observations')
+prev_summ_no_notifs <- config_p$read('model_results', 'prevalence_summary')
 
-model_preds <- readRDS(file.path(model_dir, 'model_preds.RDS'))
+model_preds <- config$read('model_results', 'model_preds')
 prev_draws <- model_preds$pred_draws_prevalence
 comp_draws <- model_preds$pred_draws_completeness
 
-## Prepare prevalence and completeness outputs ------------------------------------------>
+## Incidence and completeness summary --------------------------------------------------->
 
-# Prevalence summary at the district level
-pval <- function(prev) round(prev*1E5, 1)
-prev_summ[, ciwidth := pval(upper - lower)]
-prev_summ[, `:=` (mean = pval(mean), lower=pval(lower), upper=pval(upper))]
-prev_summ[dist_dt[year==2016], pop := i.pop_over15, on='uid']
-prev_summ <- prev_summ[order(-mean)]
-# Same for no-notifications results
-prev_summ_no_notifs[, ciwidth := pval(upper - lower)]
-prev_summ_no_notifs[, `:=` (mean = pval(mean), lower=pval(lower), upper=pval(upper))]
-prev_summ_no_notifs <- prev_summ_no_notifs[order(-mean)]
+ival <- function(inc) round(inc * 1e5)
+comp_reporting <- (copy(comp_summ)
+  [ year == SUMMARY_YEAR, ]
+  [, inc_ciwidth := ival(inc_upper - inc_lower)]
+  [, `:=` (inc_mean = ival(inc_mean), inc_upper = ival(inc_upper), inc_lower = ival(inc_lower))]
+  [(order(-inc_mean))]
+)
 
 # Completeness summary at the district level
-c_to_d <- function(comp_val) duration_intercept - duration_slope * comp_val
-comp_summ[, `:=` (d_mean = c_to_d(mean), d_lower = c_to_d(upper), d_upper = c_to_d(lower))]
+start_year <- comp_summ[, min(year)]
+
+c_to_d <- function(comp_val) (
+  config$get('duration', 'intercept') - config$get('duration', 'slope') * comp_val
+)
+d_summ <- (
+  copy(comp_summ)
+  [year %in% c(start_year, SUMMARY_YEAR), ]
+  [, `:=` (d_mean = c_to_d(mean), d_lower = c_to_d(upper), d_upper = c_to_d(lower))]
+)
 
 agg_draws <- function(draws_mat, weights){
   draws <- sapply(1:1000, function(dd) weighted.mean(draws_mat[, dd], w=weights))
@@ -65,71 +74,65 @@ natl_comp_summ <- list(
   'yr2019' = agg_draws(comp_draws[123:244,], w=dist_dt[year==2019, pop_over15])
 )
 
-# Get change at the district level, 2017 to 2019
-dist_comp_change <- comp_draws[123:244, ] / comp_draws[1:122, ]
-comp_change_summ <- dist_dt[year==2016, .(uid, district)]
-comp_change_summ$change_mean <- rowMeans(dist_comp_change)
-comp_change_summ$change_lower <- rowQuantiles(dist_comp_change, probs=0.025)
-comp_change_summ$change_upper <- rowQuantiles(dist_comp_change, probs=0.975)
-comp_change_summ <- comp_change_summ[order(-change_mean)]
 
 ## NUMBER PLUGGING ---------------------------------------------------------------------->
 
-## SECTION: Spatial variation in tuberculosis prevalence across Uganda
-# Prevalence
-maincols <- c('district','mean','lower','upper')
-natl_prev_summ
-head(prev_summ[, ..maincols])
-tail(prev_summ[, ..maincols])
+## Count change in case notification rate from 2016 to 2019
 
+## SECTION: Spatial variation in tuberculosis incidence across Uganda
+maincols <- c('ADM1_EN','ADM2_EN','inc_mean','inc_lower','inc_upper')
+head(comp_reporting[, ..maincols])
+tail(comp_reporting[, ..maincols])
+
+# Change in district completeness over time
+comp_change <- merge(
+  x = comp_summ[year == start_year, .(ADM1_EN, ADM2_EN, uid, mean)],
+  y = comp_summ[year == SUMMARY_YEAR, .(ADM1_EN, ADM2_EN, uid, mean)],
+  by = c("ADM1_EN", "ADM2_EN", "uid"),
+  suffixes = c('_start', '_end')
+)
+comp_change[, .(mean(mean_end > mean_start))]
+comp_change[, .(sum(mean_end > mean_start))]
+
+
+# Comparison of completeness in start year versus comparison year
+comp_summ[(year == start_year) , .(sum(mean > .75) / .N)]
+comp_summ[(year == start_year), .(sum(mean < .5) / .N)]
+comp_summ[(year == SUMMARY_YEAR), .(sum(mean > .75) / .N)]
+comp_summ[(year == SUMMARY_YEAR), .(sum(mean < .5) / .N)]
+
+# Comparison of average durations at the start versus in the summary year
+d_summ[, .(d_mean = weighted.mean(d_mean, w = pop_over_15)), by = year]
+(d_summ
+  [year == SUMMARY_YEAR, ]
+  [order(-d_mean)]
+  [c(1, .N), .(ADM1_EN, ADM2_EN, comp = mean, d_mean)]
+)
 
 ## SECTION: Completeness of case notifications increases over time
 # Case notifs, 2017
-comp_summ <- comp_summ[order(year, -mean)]
-head(comp_summ[year==2017, ..maincols])
-tail(comp_summ[year==2017, ..maincols])
-
-# Case notifs, 2019
-head(comp_summ[year==2019, ..maincols])
-tail(comp_summ[year==2019, ..maincols])
-
-# Change in completeness over time
-comp_change_summ[, sum(change_mean > 1) ]
-comp_change_summ[, sum(change_mean > 1) / .N ]
-comp_change_summ[, mean(change_mean)]
-
-# Average duration, 2017
-c_to_d(natl_comp_summ$yr2017)
-dcols <- c('district','d_mean','d_lower','d_upper')
-d_2017 <- comp_summ[year==2017, ..dcols][order(-d_mean)]
-head(d_2017)
-tail(d_2017)
-
-# Average duration, 2019
-c_to_d(natl_comp_summ$yr2019)
-d_2019 <- comp_summ[year==2019, ..dcols][order(-d_mean)]
-head(d_2019)
-tail(d_2019)
-
+comp_cols <- c('ADM1_EN', 'ADM2_EN', 'mean', 'lower', 'upper')
+head(comp_summ[year==start_year, ..comp_cols][order(-mean)])
+tail(comp_summ[year==SUMMARY_YEAR, ..comp_cols][order(-mean)])
 
 ## SECTION: Effect of including notifications on estimates of TB burden
 
 # UI widths of both results sets
-mean(prev_summ$ciwidth)
-quantile(prev_summ$ciwidth)
+prev_summ[, range(ival(upper-lower))]
+prev_summ[, .(ival(mean(upper-lower)))]
 
-mean(prev_summ_no_notifs$ciwidth)
-quantile(prev_summ_no_notifs$ciwidth)
+prev_summ_no_notifs[, tt := ival(upper-lower)][order(tt)][c(1, 2, .N-3, .N-2, .N-1, .N), tt]
+prev_summ_no_notifs[, .(ival(mean(upper-lower)))]
 
-# How many districts fall outside of the prevalence bounds?
-prev_low <- 200
-prev_high <- 759
+# How many districts fall outside of 'low' or 'high' prevalence bounds?
+LOW_PREV <- 300/1e5
+HIGH_PREV <- 600/1e5
 calc_bounds <- function(mean_vec, lower_vec, upper_vec){
   output <- rep('Neither', length(mean_vec))
-  output[mean_vec > 759] <- 'High burden, low confidence'
-  output[lower_vec > 759] <- 'High burden, high confidence'
-  output[mean_vec < 253] <- 'Low burden, low confidence'
-  output[upper_vec < 253] <- 'Low burden, high confidence'
+  output[mean_vec > HIGH_PREV] <- 'High burden, low confidence'
+  output[lower_vec > HIGH_PREV] <- 'High burden, high confidence'
+  output[mean_vec < LOW_PREV] <- 'Low burden, low confidence'
+  output[upper_vec < LOW_PREV] <- 'Low burden, high confidence'
   return(output)
 }
 
