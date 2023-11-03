@@ -31,10 +31,6 @@ dir.create(viz_dir, showWarnings = FALSE)
 
 ## Data loading and prep ---------------------------------------------------------------->
 
-# Load spatial data
-uga <- config$read('shps', 'viz_adm2')
-outline_sf <- config$read('shps', 'viz_adm0')
-
 # Load input data
 oos_full <- config$read('model_results', 'oos_summary')
 oos_full[, plot_label := "Full model"]
@@ -52,7 +48,7 @@ inc_data <- config$read("prepped_data", "notif_data")[year %in% config$get('mode
 inc_floor <- (inc_data
   [ year %in% config$get('model_years'), ]
   [, inc := notif_count / pop_over_15 * 1e5 ]
-  [, .(inc = max(inc, na.rm = T)), by = .(ADM1_EN, ADM2_EN, uid)]
+  [, .(inc = mean(inc, na.rm = T)), by = .(ADM1_EN, ADM2_EN, uid)]
   [, prev_floor := inc * min_duration ]
 )
 
@@ -65,6 +61,10 @@ scatter_dt <- rbindlist(list(
 # Merge on "prevalence floor" data
 scatter_dt[inc_floor, prev_floor := i.prev_floor, on = 'uid']
 
+rmse <- function(est, obs) sqrt(mean((est - obs)**2))
+scatter_dt[, .(rmse(mean, prev_per_100k_obs)), by = plot_label]
+scatter_dt[, .(cor(mean, prev_per_100k_obs)), by = plot_label ]
+scatter_dt[, .(mean(upper - lower)), by = plot_label]
 
 ## Side-by-side scatter plots of prevalence survey estimates vs. out-of-sample preds ---->
 
@@ -109,6 +109,9 @@ names(prev_floor_colors) <- prev_floor_labels
   [ lower < prev_floor, pf_label := prev_floor_labels[2] ]
   [ mean < prev_floor, pf_label := prev_floor_labels[3] ]
 )
+
+scatter_dt[, .N, by = .(plot_label, pf_label)]
+
 
 scatter_by_prev_floor <- ggplot(
   data = scatter_dt,
