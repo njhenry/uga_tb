@@ -8,8 +8,8 @@
 ## 
 ## #######################################################################################
 
-versions <- list(A = '20231024_v2', B = '20231101')
-version_labels <- list(A = 'Notifs 2016 to 2019', B = 'Notifs 2016 to 2022')
+versions <- list(A = '20231218_full', B = '20231218_sens_hiv')
+version_labels <- list(A = 'Baseline model', B = 'Lower HIV-TB coinfection rate')
 comparison_year <- 2019
 
 load_libs <- c('data.table','sf','ggplot2','grid','gridExtra','glue','terra')
@@ -152,4 +152,44 @@ grid.arrange(
   ggplotGrob(incidence_comparison_mean), ggplotGrob(incidence_comparison_uis),
   layout_matrix=matrix(1:2, ncol=1), top = overall_title
 )
+dev.off()
+
+
+## Scatter differences between two models ----------------------------------------------->
+
+scatter_title <- glue::glue(
+  'Differences in estimated incidence between models in {comparison_year}'
+)
+
+diff_breaks <- c('black', 'blue', 'red')
+names(diff_breaks) <- c('Not significant', 'Decreased incidence', 'Increased incidence')
+
+scatter_fig <- ggplot(data = notifs_wide) + 
+  geom_abline(intercept=0, slope=1, linetype=2, lwd=.5, color='#888888') +
+  geom_point(
+    aes(x = inc_mean_a*1e5, y = inc_mean_b*1e5, color = inc_ui_diff),
+    size = 1, color = 'black'
+  ) +
+  geom_errorbar(
+    aes(x = inc_mean_a*1e5, ymin = inc_lower_b*1e5, ymax = inc_upper_b*1e5, color = inc_ui_diff),
+    alpha = .5, lwd = .2
+  ) +
+  geom_errorbarh(
+    aes(y = inc_mean_b*1e5, xmin = inc_lower_a*1e5, xmax = inc_upper_a*1e5, color = inc_ui_diff),
+    alpha = .5, lwd = .2
+  ) +
+  scale_color_manual(values = diff_breaks) +
+  labs(
+    title = scatter_title,
+    x = version_labels$A,
+    y = version_labels$B,
+    color = 'Significance\nof differences'
+  ) +
+  lims(x = c(0, 1750), y = c(0, 1750)) +
+  theme_bw()
+png(
+  file.path(comparison_dir, 'incidence_scatter.png'),
+  height = 5, width = 7, units = 'in', res = 300
+)
+print(scatter_fig)
 dev.off()

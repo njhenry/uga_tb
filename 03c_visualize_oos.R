@@ -8,8 +8,8 @@
 ##
 ## #######################################################################################
 
-MODEL_VERSION_OOS <- '20231024_v2_oos'
-PREV_VERSION_OOS <- '20231024_v2_p_oos'
+MODEL_VERSION_OOS <- '20231218_full_oos'
+PREV_VERSION_OOS <- '20231218_prev_oos'
 
 load_libs <- c('data.table','sf','ggplot2','grid','gridExtra','glue','terra')
 invisible(lapply(load_libs, library, character.only=TRUE))

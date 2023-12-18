@@ -8,7 +8,7 @@
 ##
 ## #######################################################################################
 
-versions <- list(prepped_data = '20231024', model_results = '20231024_v2')
+versions <- list(prepped_data = '20231024', model_results = '20231218_full')
 
 # Load packages
 load_libs <- c('data.table','Matrix','TMB','glue','matrixStats','tictoc','optimx')
@@ -162,7 +162,7 @@ if(out_of_sample){
   oos_comparison_list <- vector('list', length = length(holdout_ids))
 
   # Run holding out every prevalence data point, then compare data to OOS prediction
-  for(holdout_id in holdout_ids) try({
+  for(holdout_id in holdout_ids){
     tmb_data_stack$holdout <- holdout_id
     model_fit <- setup_run_tmb(
       tmb_data_stack = tmb_data_stack, params_list = params_list,
@@ -170,7 +170,7 @@ if(out_of_sample){
       template_fp = file.path(repos_dir, 'uga_tb/joint_completeness_tmb_model.cpp'),
       tmb_outer_maxsteps = 1.5E5, tmb_inner_maxsteps = 1E5, parallel_model = FALSE,
       optimization_method = 'L-BFGS-B',
-      model_name="UGA joint model", verbose=TRUE, inner_verbose=FALSE
+      model_name="UGA joint model", verbose=FALSE, inner_verbose=FALSE
     )
     sdrep <- sdreport(model_fit$obj, bias.correct = TRUE, getJointPrecision = TRUE)
     model_preds <- generate_draws(
@@ -190,7 +190,7 @@ if(out_of_sample){
       y = prev_summ[, ..oos_keep_cols],
       by = merge_cols
     )
-  })
+  }
   # Combine list and save
   oos_comparison_dt <- rbindlist(oos_comparison_list)
   config$write(oos_comparison_dt, 'model_results', 'oos_summary')

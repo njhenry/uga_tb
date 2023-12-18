@@ -3,8 +3,8 @@ model_years: [2016, 2017, 2018, 2019]
 prev_data_only: FALSE
 out_of_sample: FALSE
 duration:
-  intercept: 1.88
-  slope: 0.67
+  intercept: 1.51
+  slope: 0.42
 covs:
   prev: [
     'intercept', 'hh_crowding_norm', 'log_ntl_norm', 'hiv_norm', 'refugees_pct_norm',

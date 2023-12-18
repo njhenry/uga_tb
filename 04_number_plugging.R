@@ -10,8 +10,8 @@
 ## #######################################################################################
 
 # Settings
-MODEL_VERSION <- '20231024_v2'
-PREV_VERSION <- '20231024_v2_p'
+MODEL_VERSION <- '20231218_full'
+PREV_VERSION <- '20231218_prev'
 SUMMARY_YEAR <- 2019
 
 load_libs <- c('data.table','glue','matrixStats')
@@ -41,6 +41,9 @@ model_preds <- config$read('model_results', 'model_preds')
 prev_draws <- model_preds$pred_draws_prevalence
 comp_draws <- model_preds$pred_draws_completeness
 
+# Merge population onto the district table
+dist_dt[notif_data, pop_over_15 := i.pop_over_15, on = c('uid', 'year')]
+
 ## Incidence and completeness summary --------------------------------------------------->
 
 ival <- function(inc) round(inc * 1e5)
@@ -61,17 +64,6 @@ d_summ <- (
   copy(comp_summ)
   [year %in% c(start_year, SUMMARY_YEAR), ]
   [, `:=` (d_mean = c_to_d(mean), d_lower = c_to_d(upper), d_upper = c_to_d(lower))]
-)
-
-agg_draws <- function(draws_mat, weights){
-  draws <- sapply(1:1000, function(dd) weighted.mean(draws_mat[, dd], w=weights))
-  summ <- c(mean(draws), quantile(draws, probs=c(0.025, 0.975)))
-  return(summ)
-}
-natl_prev_summ <- agg_draws(prev_draws, w=dist_dt[year==2016, pop_over15]) * 1E5
-natl_comp_summ <- list(
-  'yr2017' = agg_draws(comp_draws[1:122,], w=dist_dt[year==2017, pop_over15]),
-  'yr2019' = agg_draws(comp_draws[123:244,], w=dist_dt[year==2019, pop_over15])
 )
 
 
@@ -96,9 +88,9 @@ comp_change[, .(sum(mean_end > mean_start))]
 
 
 # Comparison of completeness in start year versus comparison year
-comp_summ[(year == start_year) , .(sum(mean > .75) / .N)]
+comp_summ[(year == start_year) , .(sum(mean > .7) / .N)]
 comp_summ[(year == start_year), .(sum(mean < .5) / .N)]
-comp_summ[(year == SUMMARY_YEAR), .(sum(mean > .75) / .N)]
+comp_summ[(year == SUMMARY_YEAR), .(sum(mean > .7) / .N)]
 comp_summ[(year == SUMMARY_YEAR), .(sum(mean < .5) / .N)]
 
 # Comparison of average durations at the start versus in the summary year
