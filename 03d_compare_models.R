@@ -8,8 +8,8 @@
 ## 
 ## #######################################################################################
 
-versions <- list(A = '20231218_full', B = '20231218_sens_hiv')
-version_labels <- list(A = 'Baseline model', B = 'Lower HIV-TB coinfection rate')
+versions <- list(A = '20231218_full', B = '20240213_sens_1yr')
+version_labels <- list(A = 'Baseline model', B = 'Duration fixed at 1 year')
 comparison_year <- 2019
 
 load_libs <- c('data.table','sf','ggplot2','grid','gridExtra','glue','terra')
@@ -179,13 +179,14 @@ scatter_fig <- ggplot(data = notifs_wide) +
     alpha = .5, lwd = .2
   ) +
   scale_color_manual(values = diff_breaks) +
+  scale_x_continuous(limits = c(0, 2e3), oob = scales::squish, labels = scales::comma) + 
+  scale_y_continuous(limits = c(0, 2e3), oob = scales::squish, labels = scales::comma) +
   labs(
     title = scatter_title,
     x = version_labels$A,
     y = version_labels$B,
     color = 'Significance\nof differences'
   ) +
-  lims(x = c(0, 1750), y = c(0, 1750)) +
   theme_bw()
 png(
   file.path(comparison_dir, 'incidence_scatter.png'),
