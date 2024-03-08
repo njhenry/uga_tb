@@ -11,13 +11,13 @@
 MODEL_VERSION <- '20231218_full'
 PREV_VERSION <- '20231218_prev'
 
-load_libs <- c('data.table','sf','ggplot2','grid','gridExtra','glue','terra')
+# Load packages
+load_libs <- c(
+  'data.table','sf','ggplot2','ggspatial','grid','gridExtra','glue','terra','versioning'
+)
 invisible(lapply(load_libs, library, character.only=TRUE))
 
-# Load custom packages
-repos_dir <- '~/repos/'
-devtools::load_all(file.path(repos_dir, 'versioning'))
-
+# Load configuration files for the default and prevalence-only models
 config <- versioning::Config$new(
   config_list = file.path('~/temp_data/uga/model_results', MODEL_VERSION, 'config.yaml')
 )
@@ -97,6 +97,7 @@ country_outline <- geom_sf(data=outline_sf, fill=NA, lwd=.25, linetype=2, color=
 fig_ps_data <- ggplot() +
   geom_sf(data=prev_sf, aes(fill=raw_prev), lwd=0.25, color='#222222') +
   country_outline +
+  ggspatial::annotation_scale(location='br', width_hint = 0.5) +
   scale_fill_gradientn(
     colors = prev_cols, breaks=prev_breaks, limits=prev_lims, oob = scales::squish,
     na.value = '#AAAAAA', labels=scales::comma
@@ -110,6 +111,9 @@ fig_ps_data <- ggplot() +
   )
 
 png(file.path(viz_dir, 'data_prev_survey.png'), height=3.5, width=4.5, units='in', res=300)
+plot(fig_ps_data)
+dev.off()
+pdf(file.path(viz_dir, 'Figure_1-top.pdf'), height=3.5, width=4.5)
 plot(fig_ps_data)
 dev.off()
 
@@ -142,6 +146,9 @@ fig_cn_data <- ggplot() +
 png(file.path(viz_dir, 'data_case_notifs.png'), height=7.5, width=7.5, units='in', res=300)
 plot(fig_cn_data)
 dev.off()
+pdf(file.path(viz_dir, 'Figure_1-bottom.pdf'), height=7.5, width=7.5)
+plot(fig_cn_data)
+dev.off()
 
 
 ## FIG: MAIN MODELED RESULTS - TB INCIDENCE PER 100k
@@ -149,6 +156,7 @@ dev.off()
 main_inc <- ggplot() + 
   geom_sf(data = prev_sf, aes(fill = inc_mean), lwd = 0.25, color = '#222222') +
   country_outline +
+  ggspatial::annotation_scale(location='br', width_hint = 0.5) +
   scale_fill_gradientn(
     colors = RColorBrewer::brewer.pal(n = 9, name = 'Greens'), breaks = prev_breaks,
     limits = prev_lims, oob = scales::squish, labels = scales::comma
@@ -165,6 +173,9 @@ main_inc <- ggplot() +
     panel.grid.major = element_line(colour = 'transparent'),
   )
 png(file.path(viz_dir, 'incidence_map.png'), height=6, width=6, units='in', res=300)
+print(main_inc)
+dev.off()
+pdf(file.path(viz_dir, 'Figure_3.pdf'), height=6, width=6)
 print(main_inc)
 dev.off()
 
@@ -293,7 +304,9 @@ comp_fig <- ggplot(data=comp_sf) +
 png(file.path(viz_dir, 'notif_completeness.png'), height=4, width=7.5, units='in', res=300)
 plot(comp_fig)
 dev.off()
-
+pdf(file.path(viz_dir, 'Figure_4.pdf'), height = 4, width = 7.5)
+plot(comp_fig)
+dev.off()
 
 ## Plot: Average duration in all model years
 
@@ -481,5 +494,8 @@ thresh_fig <- ggplot() +
   )
 
 png(file.path(viz_dir, 'thresh_comparison.png'), height=3.5, width=7.5, units='in', res=300)
+print(thresh_fig)
+dev.off()
+pdf(file.path(viz_dir, 'Figure_5.pdf'), height = 3.5, width = 7.5)
 print(thresh_fig)
 dev.off()
